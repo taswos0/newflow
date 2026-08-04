@@ -36,6 +36,47 @@ type DailyPaymentRow = {
   collectedAt: string;
 };
 
+type InvoiceRow = {
+  id: string;
+  patient_id: string;
+  total_amount: number;
+  paid_amount: number;
+  remaining_amount: number;
+  next_appointment_date: string | null;
+  payment_status: "unpaid" | "partial" | "paid";
+  patients: { full_name: string | null } | Array<{ full_name: string | null }> | null;
+  invoice_items: Array<{ treatment_title: string; price_applied: number }> | null;
+};
+
+type DailyPaymentQueryRow = {
+  id: string;
+  amount: number;
+  method: "cash" | "wallet";
+  collected_at: string;
+  patients: { full_name: string | null } | Array<{ full_name: string | null }> | null;
+};
+
+type PatientLookupRow = {
+  id: string;
+  full_name: string;
+  phone: string;
+};
+
+type InvoiceLookupRow = {
+  patient_id: string | null;
+  invoice_items: Array<{ treatment_title: string }> | null;
+  patients:
+    | {
+        full_name: string | null;
+        phone: string | null;
+      }
+    | Array<{
+        full_name: string | null;
+        phone: string | null;
+      }>
+    | null;
+};
+
 export default function ReceptionPage() {
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
@@ -135,7 +176,7 @@ export default function ReceptionPage() {
         return;
       }
 
-      const row = data?.[0];
+      const row = (data?.[0] ?? null) as InvoiceRow | null;
       if (!row) {
         setLatestInvoice(null);
         return;
@@ -174,8 +215,10 @@ export default function ReceptionPage() {
         return;
       }
 
+      const paymentRows = (data ?? []) as DailyPaymentQueryRow[];
+
       setDailyPayments(
-        (data ?? []).map((row) => {
+        paymentRows.map((row) => {
           const patientRaw = Array.isArray(row.patients) ? row.patients[0] : row.patients;
           return {
             id: row.id,
@@ -262,7 +305,10 @@ export default function ReceptionPage() {
 
       const map = new Map<string, SearchPatientRow>();
 
-      for (const patient of patientsData ?? []) {
+      const patients = (patientsData ?? []) as PatientLookupRow[];
+      const invoices = (invoicesData ?? []) as InvoiceLookupRow[];
+
+      for (const patient of patients) {
         map.set(patient.id, {
           id: patient.id,
           fullName: patient.full_name,
@@ -271,7 +317,7 @@ export default function ReceptionPage() {
         });
       }
 
-      for (const invoice of invoicesData ?? []) {
+      for (const invoice of invoices) {
         const patientId = invoice.patient_id;
         if (!patientId) {
           continue;
@@ -317,8 +363,8 @@ export default function ReceptionPage() {
     let patientId = selectedPatientId;
 
     if (!patientId) {
-      const patientInsert = await client
-        .from("patients")
+      const patientInsert = await (client
+        .from("patients") as any)
         .insert({ full_name: fullName.trim(), phone: phone.trim() })
         .select("id")
         .single();
@@ -332,7 +378,7 @@ export default function ReceptionPage() {
       patientId = patientInsert.data.id;
     }
 
-    const visitInsert = await client.from("visits_queue").insert({
+    const visitInsert = await (client.from("visits_queue") as any).insert({
       patient_id: patientId,
       visit_date: getTodayDateISO(),
       status: "waiting",
@@ -366,8 +412,8 @@ export default function ReceptionPage() {
 
     setBusy(true);
 
-    const clearCurrent = await client
-      .from("visits_queue")
+    const clearCurrent = await (client
+      .from("visits_queue") as any)
       .update({ status: "completed" })
       .eq("visit_date", getTodayDateISO())
       .eq("status", "in_consultation");
@@ -378,8 +424,8 @@ export default function ReceptionPage() {
       return;
     }
 
-    const nextIn = await client
-      .from("visits_queue")
+    const nextIn = await (client
+      .from("visits_queue") as any)
       .update({ status: "in_consultation", call_time: new Date().toISOString() })
       .eq("id", visitId)
       .eq("status", "waiting");
@@ -405,8 +451,8 @@ export default function ReceptionPage() {
 
     setBusy(true);
 
-    const result = await client
-      .from("visits_queue")
+    const result = await (client
+      .from("visits_queue") as any)
       .update({ status: "completed" })
       .eq("id", inConsultation.id)
       .eq("status", "in_consultation");
@@ -439,7 +485,7 @@ export default function ReceptionPage() {
 
     setInvoiceBusy(true);
 
-    const paymentInsert = await client.from("invoice_payments").insert({
+    const paymentInsert = await (client.from("invoice_payments") as any).insert({
       invoice_id: latestInvoice.id,
       patient_id: latestInvoice.patientId,
       amount,
@@ -452,8 +498,8 @@ export default function ReceptionPage() {
       return;
     }
 
-    const update = await client
-      .from("invoices")
+    const update = await (client
+      .from("invoices") as any)
       .update({
         paid_amount: nextPaid,
         remaining_amount: nextRemaining,
@@ -485,8 +531,8 @@ export default function ReceptionPage() {
 
     setInvoiceBusy(true);
 
-    const update = await client
-      .from("invoices")
+    const update = await (client
+      .from("invoices") as any)
       .update({ next_appointment_date: value })
       .eq("id", latestInvoice.id);
 

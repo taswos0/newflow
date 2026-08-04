@@ -26,6 +26,24 @@ type PatientSuggestion = {
   medicalAlerts: string[];
 };
 
+type AppointmentRow = {
+  id: string;
+  patient_id: string | null;
+  patient_name: string;
+  phone: string;
+  appointment_date: string;
+  appointment_time: string;
+  notes: string | null;
+};
+
+type PatientRow = {
+  id: string;
+  full_name: string;
+  phone: string;
+  birth_date: string | null;
+  medical_alerts: string[];
+};
+
 export default function Home() {
   const [monthCursor, setMonthCursor] = useState(() => {
     const now = new Date();
@@ -62,8 +80,10 @@ export default function Home() {
         return;
       }
 
+      const appointmentRows = (data ?? []) as AppointmentRow[];
+
       setAppointments(
-        (data ?? []).map((row) => ({
+        appointmentRows.map((row) => ({
           id: row.id,
           patientId: row.patient_id,
           patientName: row.patient_name,
@@ -113,8 +133,10 @@ export default function Home() {
         return;
       }
 
+      const patientRows = (data ?? []) as PatientRow[];
+
       setSuggestions(
-        (data ?? []).map((row) => ({
+        patientRows.map((row) => ({
           id: row.id,
           fullName: row.full_name,
           phone: row.phone,
@@ -150,8 +172,10 @@ export default function Home() {
         return;
       }
 
+      const patientRows = (data ?? []) as PatientRow[];
+
       setLinkedByPhone(
-        (data ?? []).map((row) => ({
+        patientRows.map((row) => ({
           id: row.id,
           fullName: row.full_name,
           phone: row.phone,
@@ -269,8 +293,8 @@ export default function Home() {
 
     let patientId = selectedPatientId;
     if (!patientId) {
-      const insertPatient = await client
-        .from("patients")
+      const insertPatient = await (client
+        .from("patients") as any)
         .insert({
           full_name: patientName.trim(),
           phone: phone.trim(),
@@ -287,7 +311,7 @@ export default function Home() {
       patientId = insertPatient.data.id;
     }
 
-    const add = await client.from("appointments").insert({
+    const add = await (client.from("appointments") as any).insert({
       patient_id: patientId,
       patient_name: patientName.trim(),
       phone: phone.trim(),
@@ -316,7 +340,7 @@ export default function Home() {
       return;
     }
 
-    const result = await client.from("appointments").delete().eq("id", appointmentId);
+    const result = await (client.from("appointments") as any).delete().eq("id", appointmentId);
 
     if (result.error) {
       toast.error(mapSupabaseError(result.error));

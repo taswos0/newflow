@@ -14,6 +14,26 @@ export type QueueVisit = {
   medicalAlerts: string[];
 };
 
+type QueueVisitRow = {
+  id: string;
+  patient_id: string;
+  status: Database['public']['Enums']['visit_status'];
+  check_in_time: string;
+  call_time: string | null;
+  patients:
+    | {
+        full_name: string | null;
+        phone: string | null;
+        medical_alerts: string[] | null;
+      }
+    | Array<{
+        full_name: string | null;
+        phone: string | null;
+        medical_alerts: string[] | null;
+      }>
+    | null;
+};
+
 export function getTodayDateISO(): string {
   const now = new Date();
   const year = now.getFullYear();
@@ -49,7 +69,9 @@ export async function fetchTodayQueue(
       return { data: [], error: mapSupabaseError(error) };
     }
 
-    const normalized: QueueVisit[] = (data ?? []).map((row) => {
+    const rows = (data ?? []) as QueueVisitRow[];
+
+    const normalized: QueueVisit[] = rows.map((row) => {
       const patientRaw = Array.isArray(row.patients) ? row.patients[0] : row.patients;
 
       return {

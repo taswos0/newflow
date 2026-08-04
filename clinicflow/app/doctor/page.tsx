@@ -37,6 +37,42 @@ type SearchPatientRow = {
   services: string[];
 };
 
+type PatientLookupRow = {
+  id: string;
+  full_name: string;
+  phone: string;
+};
+
+type InvoiceLookupRow = {
+  patient_id: string | null;
+  invoice_items: Array<{ treatment_title: string }> | null;
+  patients:
+    | {
+        full_name: string | null;
+        phone: string | null;
+      }
+    | Array<{
+        full_name: string | null;
+        phone: string | null;
+      }>
+    | null;
+};
+
+type TreatmentCatalogRow = {
+  id: string;
+  title_ar: string;
+  default_price: number;
+  category: string;
+};
+
+type AppointmentRow = {
+  id: string;
+  patient_id: string | null;
+  patient_name: string;
+  appointment_date: string;
+  appointment_time: string;
+};
+
 type BillingDraft = {
   visitId: string;
   selectedIds: string[];
@@ -128,7 +164,10 @@ export default function DoctorPage() {
 
       const map = new Map<string, SearchPatientRow>();
 
-      for (const patient of patientsData ?? []) {
+      const patients = (patientsData ?? []) as PatientLookupRow[];
+      const invoices = (invoicesData ?? []) as InvoiceLookupRow[];
+
+      for (const patient of patients) {
         map.set(patient.id, {
           id: patient.id,
           fullName: patient.full_name,
@@ -137,7 +176,7 @@ export default function DoctorPage() {
         });
       }
 
-      for (const invoice of invoicesData ?? []) {
+      for (const invoice of invoices) {
         const patientId = invoice.patient_id;
         if (!patientId) {
           continue;
@@ -182,8 +221,10 @@ export default function DoctorPage() {
         return;
       }
 
+      const catalogRows = (data ?? []) as TreatmentCatalogRow[];
+
       setCatalog(
-        (data ?? []).map((item) => ({
+        catalogRows.map((item) => ({
           id: item.id,
           titleAr: item.title_ar,
           defaultPrice: item.default_price,
@@ -211,8 +252,10 @@ export default function DoctorPage() {
         return;
       }
 
+      const appointmentRows = (data ?? []) as AppointmentRow[];
+
       setAppointments(
-        (data ?? []).map((row) => ({
+        appointmentRows.map((row) => ({
           id: row.id,
           patientId: row.patient_id,
           patientName: row.patient_name,
@@ -377,8 +420,8 @@ export default function DoctorPage() {
 
     setBillingBusy(true);
 
-    const invoiceUpsert = await client
-      .from("invoices")
+    const invoiceUpsert = await (client
+      .from("invoices") as any)
       .upsert(
         {
           visit_id: activePatient.id,
@@ -402,14 +445,14 @@ export default function DoctorPage() {
 
     const invoiceId = invoiceUpsert.data.id;
 
-    const cleanupItems = await client.from("invoice_items").delete().eq("invoice_id", invoiceId);
+    const cleanupItems = await (client.from("invoice_items") as any).delete().eq("invoice_id", invoiceId);
     if (cleanupItems.error) {
       setBillingBusy(false);
       toast.error(mapSupabaseError(cleanupItems.error));
       return;
     }
 
-    const insertItems = await client.from("invoice_items").insert(
+    const insertItems = await (client.from("invoice_items") as any).insert(
       selectedTreatments.map((item) => ({
         invoice_id: invoiceId,
         treatment_title: item.title,
@@ -439,7 +482,7 @@ export default function DoctorPage() {
       }
 
       if (!existingAppointment.data) {
-        const appointmentInsert = await client.from("appointments").insert({
+        const appointmentInsert = await (client.from("appointments") as any).insert({
           patient_id: activePatient.patientId,
           patient_name: activePatient.fullName,
           phone: activePatient.phone,
@@ -456,8 +499,8 @@ export default function DoctorPage() {
       }
     }
 
-    const closeVisit = await client
-      .from("visits_queue")
+    const closeVisit = await (client
+      .from("visits_queue") as any)
       .update({ status: "completed" })
       .eq("id", activePatient.id)
       .eq("status", "in_consultation");
