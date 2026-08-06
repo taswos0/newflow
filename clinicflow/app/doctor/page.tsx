@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { CalendarClock, FileText, Wallet } from "lucide-react";
 import { toast } from "sonner";
@@ -102,6 +102,9 @@ export default function DoctorPage() {
   const [previewPatient, setPreviewPatient] = useState<SearchPatientRow | null>(null);
   const [billingDraft, setBillingDraft] = useState<BillingDraft>(emptyDraft(""));
   const [billingBusy, setBillingBusy] = useState(false);
+  const [catalogTitle, setCatalogTitle] = useState("");
+  const [catalogPrice, setCatalogPrice] = useState("");
+  const [catalogBusy, setCatalogBusy] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
   const { client, error: setupError } = tryGetSupabaseBrowserClient();
 
@@ -205,36 +208,51 @@ export default function DoctorPage() {
     void loadSearchRows();
   }, [client]);
 
+  const loadCatalog = useCallback(async () => {
+    if (!client) {
+      return;
+    }
+
+    const { data, error } = await client
+      .from("treatments_catalog")
+      .select("id, title_ar, default_price, category")
+      .order("title_ar", { ascending: true });
+
+    if (error) {
+      setErrorText(mapSupabaseError(error));
+      return;
+    }
+
+    const catalogRows = (data ?? []) as TreatmentCatalogRow[];
+
+    setCatalog(
+      catalogRows.map((item) => ({
+        id: item.id,
+        titleAr: item.title_ar,
+        defaultPrice: item.default_price,
+        category: item.category,
+      })),
+    );
+  }, [client]);
+
   useEffect(() => {
     if (!client) {
       return;
     }
 
-    const loadCatalog = async () => {
-      const { data, error } = await client
-        .from("treatments_catalog")
-        .select("id, title_ar, default_price, category")
-        .order("title_ar", { ascending: true });
-
-      if (error) {
-        setErrorText(mapSupabaseError(error));
-        return;
-      }
-
-      const catalogRows = (data ?? []) as TreatmentCatalogRow[];
-
-      setCatalog(
-        catalogRows.map((item) => ({
-          id: item.id,
-          titleAr: item.title_ar,
-          defaultPrice: item.default_price,
-          category: item.category,
-        })),
-      );
-    };
-
     void loadCatalog();
-  }, [client]);
+
+    const channel = client
+      .channel("doctor-treatments-catalog")
+      .on("postgres_changes", { event: "*", schema: "public", table: "treatments_catalog" }, () => {
+        void loadCatalog();
+      })
+      .subscribe();
+
+    return () => {
+      void client.removeChannel(channel);
+    };
+  }, [client, loadCatalog]);
 
   useEffect(() => {
     if (!client) {
@@ -396,6 +414,45 @@ export default function DoctorPage() {
       : [...visitDraft.selectedIds, id];
 
     updateDraft({ selectedIds: nextIds });
+  };
+
+  const onAddCatalogItem = async () => {
+    if (!client) {
+      return;
+    }
+
+    const title = catalogTitle.trim();
+    const price = Number(catalogPrice);
+
+    if (!title) {
+      toast.error("أدخل نوع الكشف");
+      return;
+    }
+
+    if (!Number.isFinite(price) || price < 0) {
+      toast.error("أدخل سعر صحيح");
+      return;
+    }
+
+    setCatalogBusy(true);
+
+    const { error } = await (client.from("treatments_catalog") as any).insert({
+      title_ar: title,
+      default_price: price,
+      category: "كشف",
+    });
+
+    setCatalogBusy(false);
+
+    if (error) {
+      toast.error(mapSupabaseError(error));
+      return;
+    }
+
+    setCatalogTitle("");
+    setCatalogPrice("");
+    toast.success("تمت إضافة نوع الكشف بنجاح");
+    void loadCatalog();
   };
 
   const onBillingSubmit = async () => {
@@ -610,10 +667,39 @@ export default function DoctorPage() {
           </Panel>
 
           <Panel title="إتمام الجلسة" icon={<Wallet className="h-5 w-5" />}>
-            {!activePatient ? (
-              <p className="text-sm leading-7 text-muted">ابدأ بإدخال مريض من السكرتارية لتفعيل تحديد نوع الكشف.</p>
-            ) : (
-              <div className="space-y-3">
+            <div className="space-y-3">
+              <div className="rounded-xl border border-line bg-primary-soft/40 p-2">
+                <p className="mb-2 text-xs font-bold text-primary">إضافة نوع كشف جديد إلى الكتالوج</p>
+                <div className="grid gap-2 sm:grid-cols-[1fr_120px_auto]">
+                  <input
+                    value={catalogTitle}
+                    onChange={(event) => setCatalogTitle(event.target.value)}
+                    placeholder="نوع الكشف"
+                    className="w-full rounded-lg border border-line px-2 py-2 text-sm outline-none"
+                  />
+                  <input
+                    type="number"
+                    min={0}
+                    value={catalogPrice}
+                    onChange={(event) => setCatalogPrice(event.target.value)}
+                    placeholder="السعر"
+                    className="w-full rounded-lg border border-line px-2 py-2 text-sm outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={onAddCatalogItem}
+                    disabled={catalogBusy}
+                    className="rounded-lg bg-primary px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+                  >
+                    إضافة
+                  </button>
+                </div>
+              </div>
+
+              {!activePatient ? (
+                <p className="text-sm leading-7 text-muted">ابدأ بإدخال مريض من السكرتارية لتفعيل إتمام الجلسة.</p>
+              ) : (
+                <>
                 <div className="rounded-xl border border-line bg-primary-soft/30 p-2">
                   <p className="mb-2 text-xs font-bold text-primary">إضافة كشف/علاج يدوي</p>
                   <div className="grid gap-2 sm:grid-cols-2">
@@ -709,8 +795,9 @@ export default function DoctorPage() {
                 >
                   إتمام الجلسة وإرسال الحساب
                 </button>
-              </div>
-            )}
+                </>
+              )}
+            </div>
           </Panel>
         </section>
       </div>
