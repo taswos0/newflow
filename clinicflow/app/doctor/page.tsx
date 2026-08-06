@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { CalendarClock, FileText, Wallet } from "lucide-react";
 import { toast } from "sonner";
@@ -107,6 +107,8 @@ export default function DoctorPage() {
   const [catalogBusy, setCatalogBusy] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
   const { client, error: setupError } = tryGetSupabaseBrowserClient();
+  const lastActiveVisitIdRef = useRef<string | null>(null);
+  const hasSyncedActiveVisitRef = useRef(false);
 
   useEffect(() => {
     if (!client) {
@@ -301,6 +303,60 @@ export default function DoctorPage() {
     () => queue.find((visit) => visit.status === "in_consultation") ?? null,
     [queue],
   );
+
+  const playPopSound = useCallback(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const audioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!audioContextClass) {
+      return;
+    }
+
+    try {
+      const ctx = new audioContextClass();
+      const oscillator = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+
+      oscillator.type = "triangle";
+      oscillator.frequency.setValueAtTime(880, ctx.currentTime);
+      oscillator.frequency.exponentialRampToValueAtTime(1240, ctx.currentTime + 0.12);
+
+      gainNode.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + 0.02);
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.22);
+
+      oscillator.connect(gainNode);
+      gainNode.connect(ctx.destination);
+
+      oscillator.start();
+      oscillator.stop(ctx.currentTime + 0.24);
+      setTimeout(() => {
+        void ctx.close();
+      }, 320);
+    } catch {
+      // Ignore audio failures (browser policy/device limitations).
+    }
+  }, []);
+
+  useEffect(() => {
+    const activeVisitId = activePatient?.id ?? null;
+
+    if (!hasSyncedActiveVisitRef.current) {
+      lastActiveVisitIdRef.current = activeVisitId;
+      hasSyncedActiveVisitRef.current = true;
+      return;
+    }
+
+    const previousId = lastActiveVisitIdRef.current;
+    if (activeVisitId && activeVisitId !== previousId) {
+      playPopSound();
+      toast.success(`تم استدعاء المريض ${activePatient?.fullName ?? ""} إلى غرفة الكشف`);
+    }
+
+    lastActiveVisitIdRef.current = activeVisitId;
+  }, [activePatient, playPopSound]);
 
   const upcoming = useMemo(
     () => queue.filter((visit) => visit.status === "waiting").slice(0, 3),

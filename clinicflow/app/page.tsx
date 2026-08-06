@@ -4,9 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { CalendarDays, Monitor, Stethoscope, Trash2, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
+import type { Session } from "@supabase/supabase-js";
 
 import { tryGetSupabaseBrowserClient } from "@/lib/supabase/client";
 import { mapSupabaseError } from "@/lib/supabase/error-map";
+import { canAccessDoctor } from "@/lib/auth/roles";
 
 type CalendarAppointment = {
   id: string;
@@ -58,9 +60,33 @@ export default function Home() {
   const [appointmentTime, setAppointmentTime] = useState("09:00");
   const [notes, setNotes] = useState("");
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [saving, setSaving] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
   const { client, error: setupError } = tryGetSupabaseBrowserClient();
+
+  useEffect(() => {
+    if (!client) {
+      return;
+    }
+
+    const loadSession = async () => {
+      const { data } = await client.auth.getSession();
+      setSession(data.session);
+    };
+
+    void loadSession();
+
+    const {
+      data: { subscription },
+    } = client.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [client]);
 
   useEffect(() => {
     if (!client) {
@@ -251,6 +277,8 @@ export default function Home() {
     [selectedDayAppointments, appointmentTime],
   );
 
+  const allowDoctorView = useMemo(() => canAccessDoctor(session), [session]);
+
   const openDay = (iso: string) => {
     setSelectedDate(iso);
     setPatientName("");
@@ -368,13 +396,15 @@ export default function Home() {
         </section>
 
         <section className="grid gap-4 md:grid-cols-3">
-          <RoleCard
-            href="/doctor"
-            title="واجهة الطبيب"
-            description="متابعة الحالة الحالية، السجل الطبي، وإتمام الجلسة"
-            badge="Doctor"
-            icon={<Stethoscope className="h-5 w-5" />}
-          />
+          {allowDoctorView ? (
+            <RoleCard
+              href="/doctor"
+              title="واجهة الطبيب"
+              description="متابعة الحالة الحالية، السجل الطبي، وإتمام الجلسة"
+              badge="Doctor"
+              icon={<Stethoscope className="h-5 w-5" />}
+            />
+          ) : null}
           <RoleCard
             href="/reception"
             title="واجهة السكرتارية"

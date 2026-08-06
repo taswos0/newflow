@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import type { Session } from "@supabase/supabase-js";
 
 import { tryGetSupabaseBrowserClient } from "@/lib/supabase/client";
+import { canAccessDoctor } from "@/lib/auth/roles";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -50,6 +51,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
     if (session && pathname === "/login") {
       router.replace("/");
+      return;
+    }
+
+    if (session && pathname.startsWith("/doctor") && !canAccessDoctor(session)) {
+      router.replace("/reception");
     }
   }, [loading, pathname, router, session]);
 
