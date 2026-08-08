@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { BellRing, ReceiptText, UserRoundPlus } from "lucide-react";
+import { BellRing, CalendarDays, ReceiptText, UserRoundPlus } from "lucide-react";
 import { toast } from "sonner";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 
 import { fetchTodayQueue, getTodayDateISO, type QueueVisit } from "@/lib/queue/live-queue";
 import { tryGetSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -77,6 +78,13 @@ type InvoiceLookupRow = {
     | null;
 };
 
+type TodayAppointment = {
+  id: string;
+  patientName: string;
+  phone: string;
+  appointmentTime: string;
+};
+
 export default function ReceptionPage() {
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
@@ -94,8 +102,12 @@ export default function ReceptionPage() {
   });
   const [busy, setBusy] = useState(false);
   const [invoiceBusy, setInvoiceBusy] = useState(false);
+  const [receptionCallAlertActive, setReceptionCallAlertActive] = useState(false);
+  const [todayAppointments, setTodayAppointments] = useState<TodayAppointment[]>([]);
   const [errorText, setErrorText] = useState<string | null>(null);
   const { client, error: setupError } = tryGetSupabaseBrowserClient();
+  const receptionCallChannelRef = useRef<RealtimeChannel | null>(null);
+  const receptionCallIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const waiting = useMemo(
     () => queue.filter((visit) => visit.status === "waiting"),
@@ -133,6 +145,83 @@ export default function ReceptionPage() {
       { total: 0, cash: 0, wallet: 0 },
     );
   }, [dailyPayments]);
+
+  const playSoftCallSound = useCallback(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const audioContextClass =
+      window.AudioContext ||
+      (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+
+    if (!audioContextClass) {
+      return;
+    }
+
+    try {
+      const ctx = new audioContextClass();
+      const oscillator = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(660, ctx.currentTime);
+      oscillator.frequency.exponentialRampToValueAtTime(740, ctx.currentTime + 0.18);
+
+      gainNode.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.05, ctx.currentTime + 0.04);
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.4);
+
+      oscillator.connect(gainNode);
+      gainNode.connect(ctx.destination);
+
+      oscillator.start();
+      oscillator.stop(ctx.currentTime + 0.42);
+
+      setTimeout(() => {
+        void ctx.close();
+      }, 650);
+    } catch {
+      // Ignore audio failures due to browser/device limitations.
+    }
+  }, []);
+
+  const stopReceptionCallAlert = useCallback(() => {
+    if (receptionCallIntervalRef.current) {
+      clearInterval(receptionCallIntervalRef.current);
+      receptionCallIntervalRef.current = null;
+    }
+    setReceptionCallAlertActive(false);
+  }, []);
+
+  useEffect(() => {
+    if (!client) {
+      return;
+    }
+
+    const channel = client
+      .channel("clinic-reception-calls")
+      .on("broadcast", { event: "call-reception" }, () => {
+        setReceptionCallAlertActive(true);
+        toast("الطبيب يطلب حضور السكرتارية", { duration: 5000 });
+        playSoftCallSound();
+
+        if (!receptionCallIntervalRef.current) {
+          receptionCallIntervalRef.current = setInterval(() => {
+            playSoftCallSound();
+          }, 3000);
+        }
+      });
+
+    channel.subscribe();
+    receptionCallChannelRef.current = channel;
+
+    return () => {
+      stopReceptionCallAlert();
+      receptionCallChannelRef.current = null;
+      void client.removeChannel(channel);
+    };
+  }, [client, playSoftCallSound, stopReceptionCallAlert]);
 
   useEffect(() => {
     if (!client) {
@@ -234,6 +323,27 @@ export default function ReceptionPage() {
     void refreshInvoice();
     void refreshDailyPayments();
 
+    const refreshTodayAppointments = async () => {
+      const { data, error: apptError } = await client
+        .from("appointments")
+        .select("id, patient_name, phone, appointment_time")
+        .eq("appointment_date", getTodayDateISO())
+        .order("appointment_time", { ascending: true });
+
+      if (!apptError) {
+        setTodayAppointments(
+          (data ?? []).map((row) => ({
+            id: row.id,
+            patientName: row.patient_name,
+            phone: row.phone,
+            appointmentTime: row.appointment_time as string,
+          })),
+        );
+      }
+    };
+
+    void refreshTodayAppointments();
+
     const channel = client
       .channel("reception-live-queue")
       .on(
@@ -269,6 +379,13 @@ export default function ReceptionPage() {
         { event: "*", schema: "public", table: "invoice_payments" },
         () => {
           void refreshDailyPayments();
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "appointments" },
+        () => {
+          void refreshTodayAppointments();
         },
       )
       .subscribe();
@@ -568,92 +685,115 @@ export default function ReceptionPage() {
           </div>
         ) : null}
 
-        <section className="mb-4 rounded-2xl border border-line bg-white p-4">
-          <h2 className="mb-3 text-lg font-extrabold text-foreground">المبالغ المحصلة اليوم</h2>
-          <div className="mb-3 grid gap-2 sm:grid-cols-3">
-            <div className="rounded-xl bg-primary-soft px-3 py-2 text-sm font-bold text-primary">
-              الإجمالي: {dailySummary.total.toFixed(2)}
-            </div>
-            <div className="rounded-xl bg-white px-3 py-2 text-sm font-bold text-foreground">
-              كاش: {dailySummary.cash.toFixed(2)}
-            </div>
-            <div className="rounded-xl bg-white px-3 py-2 text-sm font-bold text-foreground">
-              محفظة: {dailySummary.wallet.toFixed(2)}
-            </div>
-          </div>
-          <div className="max-h-36 space-y-2 overflow-auto">
-            {dailyPayments.length === 0 ? (
-              <p className="text-sm text-muted">لا توجد تحصيلات اليوم.</p>
+        {/* TOP: today appointments + patient registration */}
+        <section className="mb-6 grid gap-4 lg:grid-cols-2">
+          <Panel title="مواعيد اليوم" icon={<CalendarDays className="h-5 w-5" />}>
+            {todayAppointments.length === 0 ? (
+              <p className="text-sm text-muted">لا توجد مواعيد مجدولة لليوم.</p>
             ) : (
-              dailyPayments.map((payment) => (
-                <article key={payment.id} className="rounded-lg border border-line px-3 py-2 text-sm">
-                  <p className="font-bold text-foreground">{payment.patientName}</p>
-                  <p className="text-muted">
-                    {payment.amount.toFixed(2)} - {payment.method === "cash" ? "كاش" : "محفظة"}
-                  </p>
+              <ul className="max-h-64 space-y-2 overflow-auto">
+                {todayAppointments.map((appt) => (
+                  <li key={appt.id} className="rounded-xl border border-line px-3 py-2 text-sm">
+                    <p className="font-bold text-foreground">{appt.patientName}</p>
+                    <p className="text-muted">
+                      {appt.phone} — {appt.appointmentTime.slice(0, 5)}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Panel>
+
+          <div className="flex flex-col gap-4">
+            <section className="rounded-2xl border border-line bg-white p-4">
+              <h2 className="mb-3 text-lg font-extrabold text-foreground">بحث المرضى</h2>
+              <input
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="ابحث بالاسم أو رقم التليفون أو الخدمة"
+                className="w-full rounded-xl border border-line px-3 py-2 text-sm outline-none"
+              />
+              {searchTerm.trim() ? (
+                <div className="mt-3 space-y-2">
+                  {filteredSearchRows.length === 0 ? (
+                    <p className="text-sm text-muted">لا توجد نتائج مطابقة.</p>
+                  ) : (
+                    filteredSearchRows.map((row) => (
+                      <button
+                        key={row.id}
+                        type="button"
+                        onClick={() => onPickSearchPatient(row)}
+                        className="block w-full rounded-lg border border-line px-3 py-2 text-right text-sm transition hover:border-primary/40"
+                      >
+                        <p className="font-bold text-foreground">{row.fullName}</p>
+                        <p className="text-muted">{row.phone}</p>
+                        <p className="text-xs text-muted">
+                          {row.services.length > 0 ? row.services.join(" - ") : "لا توجد خدمات مسجلة"}
+                        </p>
+                      </button>
+                    ))
+                  )}
+                </div>
+              ) : null}
+            </section>
+
+            <Panel title="تسجيل مريض" icon={<UserRoundPlus className="h-5 w-5" />}>
+              <form onSubmit={onAddPatient} className="space-y-2">
+                <input
+                  value={fullName}
+                  onChange={(event) => setFullName(event.target.value)}
+                  placeholder="اسم المريض"
+                  className="w-full rounded-xl border border-line px-3 py-2 text-sm outline-none ring-primary/20 focus:ring"
+                />
+                <input
+                  value={phone}
+                  onChange={(event) => setPhone(event.target.value)}
+                  placeholder="رقم الهاتف"
+                  className="w-full rounded-xl border border-line px-3 py-2 text-sm outline-none ring-primary/20 focus:ring"
+                />
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="w-full rounded-xl bg-secondary px-3 py-2 text-sm font-bold text-white transition hover:opacity-90 disabled:opacity-50"
+                >
+                  إضافة إلى الدور
+                </button>
+              </form>
+            </Panel>
+          </div>
+        </section>
+
+        {/* MIDDLE: waiting queue + current status */}
+        <section className="mb-4 rounded-2xl border border-line bg-white p-4">
+          <h2 className="mb-3 text-lg font-extrabold text-foreground">قائمة الانتظار</h2>
+          <div className="space-y-2">
+            {waiting.length === 0 ? (
+              <p className="text-sm text-muted">لا يوجد مرضى في الانتظار.</p>
+            ) : (
+              waiting.map((visit) => (
+                <article
+                  key={visit.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line px-3 py-3"
+                >
+                  <div>
+                    <p className="text-sm font-bold text-foreground">{visit.fullName}</p>
+                    <p className="text-xs text-muted">{visit.phone}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onCallPatient(visit.id)}
+                    disabled={busy}
+                    className="rounded-lg bg-primary px-3 py-2 text-xs font-bold text-white transition hover:opacity-90 disabled:opacity-50"
+                  >
+                    إدخال المريض
+                  </button>
                 </article>
               ))
             )}
           </div>
         </section>
 
-        <section className="mb-4 rounded-2xl border border-line bg-white p-4">
-          <h2 className="mb-3 text-lg font-extrabold text-foreground">بحث المرضى</h2>
-          <input
-            value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder="ابحث بالاسم أو رقم التليفون أو الخدمة"
-            className="w-full rounded-xl border border-line px-3 py-2 text-sm outline-none"
-          />
-          {searchTerm.trim() ? (
-            <div className="mt-3 space-y-2">
-              {filteredSearchRows.length === 0 ? (
-                <p className="text-sm text-muted">لا توجد نتائج مطابقة.</p>
-              ) : (
-                filteredSearchRows.map((row) => (
-                  <button
-                    key={row.id}
-                    type="button"
-                    onClick={() => onPickSearchPatient(row)}
-                    className="block w-full rounded-lg border border-line px-3 py-2 text-right text-sm transition hover:border-primary/40"
-                  >
-                    <p className="font-bold text-foreground">{row.fullName}</p>
-                    <p className="text-muted">{row.phone}</p>
-                    <p className="text-xs text-muted">
-                      {row.services.length > 0 ? row.services.join(" - ") : "لا توجد خدمات مسجلة"}
-                    </p>
-                  </button>
-                ))
-              )}
-            </div>
-          ) : null}
-        </section>
-
-        <section className="mb-6 grid gap-4 lg:grid-cols-3">
-          <Panel title="تسجيل مريض" icon={<UserRoundPlus className="h-5 w-5" />}>
-            <form onSubmit={onAddPatient} className="space-y-2">
-              <input
-                value={fullName}
-                onChange={(event) => setFullName(event.target.value)}
-                placeholder="اسم المريض"
-                className="w-full rounded-xl border border-line px-3 py-2 text-sm outline-none ring-primary/20 focus:ring"
-              />
-              <input
-                value={phone}
-                onChange={(event) => setPhone(event.target.value)}
-                placeholder="رقم الهاتف"
-                className="w-full rounded-xl border border-line px-3 py-2 text-sm outline-none ring-primary/20 focus:ring"
-              />
-              <button
-                type="submit"
-                disabled={busy}
-                className="w-full rounded-xl bg-secondary px-3 py-2 text-sm font-bold text-white transition hover:opacity-90 disabled:opacity-50"
-              >
-                إضافة إلى الدور
-              </button>
-            </form>
-          </Panel>
-
+        <div className="mb-4">
           <Panel title="الحالة الحالية" icon={<BellRing className="h-5 w-5" />}>
             {inConsultation ? (
               <div className="space-y-2 text-sm text-muted">
@@ -672,7 +812,10 @@ export default function ReceptionPage() {
               <p className="text-sm text-muted">لا يوجد مريض داخل الكشف حاليا</p>
             )}
           </Panel>
+        </div>
 
+        {/* BOTTOM: accounting */}
+        <section className="mt-4 grid gap-4 lg:grid-cols-2">
           <Panel title="استلام الحساب" icon={<ReceiptText className="h-5 w-5" />}>
             {!latestInvoice ? (
               <p className="text-sm leading-7 text-muted">لا توجد فاتورة صادرة من الطبيب حتى الآن.</p>
@@ -755,37 +898,51 @@ export default function ReceptionPage() {
               </div>
             )}
           </Panel>
-        </section>
 
-        <section className="rounded-2xl border border-line bg-white p-4">
-          <h2 className="mb-3 text-lg font-extrabold text-foreground">قائمة الانتظار</h2>
-          <div className="space-y-2">
-            {waiting.length === 0 ? (
-              <p className="text-sm text-muted">لا يوجد مرضى في الانتظار.</p>
-            ) : (
-              waiting.map((visit) => (
-                <article
-                  key={visit.id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line px-3 py-3"
-                >
-                  <div>
-                    <p className="text-sm font-bold text-foreground">{visit.fullName}</p>
-                    <p className="text-xs text-muted">{visit.phone}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onCallPatient(visit.id)}
-                    disabled={busy}
-                    className="rounded-lg bg-primary px-3 py-2 text-xs font-bold text-white transition hover:opacity-90 disabled:opacity-50"
-                  >
-                    إدخال المريض
-                  </button>
-                </article>
-              ))
-            )}
-          </div>
+          <section className="rounded-2xl border border-line bg-white p-4">
+            <h2 className="mb-3 text-lg font-extrabold text-foreground">المبالغ المحصلة اليوم</h2>
+            <div className="mb-3 grid gap-2 sm:grid-cols-3">
+              <div className="rounded-xl bg-primary-soft px-3 py-2 text-sm font-bold text-primary">
+                الإجمالي: {dailySummary.total.toFixed(2)}
+              </div>
+              <div className="rounded-xl bg-white px-3 py-2 text-sm font-bold text-foreground">
+                كاش: {dailySummary.cash.toFixed(2)}
+              </div>
+              <div className="rounded-xl bg-white px-3 py-2 text-sm font-bold text-foreground">
+                محفظة: {dailySummary.wallet.toFixed(2)}
+              </div>
+            </div>
+            <div className="max-h-36 space-y-2 overflow-auto">
+              {dailyPayments.length === 0 ? (
+                <p className="text-sm text-muted">لا توجد تحصيلات اليوم.</p>
+              ) : (
+                dailyPayments.map((payment) => (
+                  <article key={payment.id} className="rounded-lg border border-line px-3 py-2 text-sm">
+                    <p className="font-bold text-foreground">{payment.patientName}</p>
+                    <p className="text-muted">
+                      {payment.amount.toFixed(2)} - {payment.method === "cash" ? "كاش" : "محفظة"}
+                    </p>
+                  </article>
+                ))
+              )}
+            </div>
+          </section>
         </section>
       </div>
+
+      {receptionCallAlertActive ? (
+        <div className="fixed bottom-4 left-4 right-4 z-50 rounded-2xl border border-secondary/30 bg-white p-3 shadow-[0_12px_30px_rgba(2,132,199,0.2)] sm:left-auto sm:right-6 sm:w-[360px]">
+          <p className="text-sm font-extrabold text-foreground">استدعاء من الطبيب</p>
+          <p className="mt-1 text-xs text-muted">يوجد طلب حضور من الطبيب. يتم تكرار تنبيه صوتي هادئ.</p>
+          <button
+            type="button"
+            onClick={stopReceptionCallAlert}
+            className="mt-3 w-full rounded-xl bg-secondary px-3 py-2 text-sm font-bold text-white transition hover:opacity-90"
+          >
+            تم الاستلام
+          </button>
+        </div>
+      ) : null}
     </main>
   );
 }
