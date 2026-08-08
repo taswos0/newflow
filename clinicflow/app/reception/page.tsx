@@ -162,26 +162,32 @@ export default function ReceptionPage() {
 
     try {
       const ctx = new audioContextClass();
-      const oscillator = ctx.createOscillator();
-      const gainNode = ctx.createGain();
+      const REPEATS = 4;
+      const BEEP_DURATION = 0.42;
+      const GAP = 0.5;
 
-      oscillator.type = "sine";
-      oscillator.frequency.setValueAtTime(660, ctx.currentTime);
-      oscillator.frequency.exponentialRampToValueAtTime(740, ctx.currentTime + 0.18);
+      for (let i = 0; i < REPEATS; i++) {
+        const start = ctx.currentTime + i * (BEEP_DURATION + GAP);
+        const oscillator = ctx.createOscillator();
+        const gainNode = ctx.createGain();
 
-      gainNode.gain.setValueAtTime(0.0001, ctx.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.05, ctx.currentTime + 0.04);
-      gainNode.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.4);
+        oscillator.type = "sine";
+        oscillator.frequency.setValueAtTime(660, start);
+        oscillator.frequency.exponentialRampToValueAtTime(740, start + 0.18);
 
-      oscillator.connect(gainNode);
-      gainNode.connect(ctx.destination);
+        gainNode.gain.setValueAtTime(0.0001, start);
+        gainNode.gain.exponentialRampToValueAtTime(0.05, start + 0.04);
+        gainNode.gain.exponentialRampToValueAtTime(0.0001, start + BEEP_DURATION);
 
-      oscillator.start();
-      oscillator.stop(ctx.currentTime + 0.42);
+        oscillator.connect(gainNode);
+        gainNode.connect(ctx.destination);
 
-      setTimeout(() => {
-        void ctx.close();
-      }, 650);
+        oscillator.start(start);
+        oscillator.stop(start + BEEP_DURATION);
+      }
+
+      // close after all 4 beeps finish
+      setTimeout(() => void ctx.close(), REPEATS * (BEEP_DURATION + GAP) * 1000 + 300);
     } catch {
       // Ignore audio failures due to browser/device limitations.
     }
@@ -210,7 +216,7 @@ export default function ReceptionPage() {
         if (!receptionCallIntervalRef.current) {
           receptionCallIntervalRef.current = setInterval(() => {
             playSoftCallSound();
-          }, 3000);
+          }, 5000);
         }
       });
 
