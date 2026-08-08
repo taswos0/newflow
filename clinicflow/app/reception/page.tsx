@@ -332,12 +332,13 @@ export default function ReceptionPage() {
         .order("appointment_time", { ascending: true });
 
       if (!apptError) {
+        type ApptRow = { id: string; patient_name: string; phone: string; appointment_time: string };
         setTodayAppointments(
-          (data ?? []).map((row) => ({
+          ((data ?? []) as ApptRow[]).map((row) => ({
             id: row.id,
             patientName: row.patient_name,
             phone: row.phone,
-            appointmentTime: row.appointment_time as string,
+            appointmentTime: row.appointment_time,
           })),
         );
       }
