@@ -690,12 +690,21 @@ export default function ReceptionPage() {
             <p className="text-sm font-semibold text-secondary">Reception View</p>
             <h1 className="text-3xl font-black text-foreground">واجهة السكرتارية</h1>
           </div>
-          <Link
-            href="/"
-            className="rounded-full border border-line bg-white px-4 py-2 text-sm font-bold text-foreground transition hover:border-secondary/40"
-          >
-            العودة للصفحة الرئيسية
-          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href="/"
+              className="inline-flex items-center gap-2 rounded-full border border-line bg-white px-4 py-2 text-sm font-bold text-foreground transition hover:border-secondary/40"
+            >
+              <CalendarDays className="h-4 w-4" />
+              الكالندر
+            </Link>
+            <Link
+              href="/"
+              className="rounded-full border border-line bg-white px-4 py-2 text-sm font-bold text-foreground transition hover:border-secondary/40"
+            >
+              العودة للصفحة الرئيسية
+            </Link>
+          </div>
         </header>
 
         {setupError || errorText ? (
