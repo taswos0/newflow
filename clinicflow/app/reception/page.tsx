@@ -230,178 +230,152 @@ export default function ReceptionPage() {
     };
   }, [client, playSoftCallSound, stopReceptionCallAlert]);
 
+  const refreshQueue = useCallback(async () => {
+    if (!client) {
+      return;
+    }
+    const result = await fetchTodayQueue(client);
+    if (result.error) {
+      setErrorText(result.error);
+      return;
+    }
+    setQueue(result.data);
+    setErrorText(null);
+  }, [client]);
+
+  const refreshInvoice = useCallback(async () => {
+    if (!client) {
+      return;
+    }
+    const { data, error } = await client
+      .from("invoices")
+      .select(
+        `
+          id,
+          patient_id,
+          total_amount,
+          paid_amount,
+          remaining_amount,
+          next_appointment_date,
+          payment_status,
+          created_at,
+          patients ( full_name ),
+          invoice_items ( treatment_title, price_applied )
+        `,
+      )
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (error) {
+      setErrorText(mapSupabaseError(error));
+      return;
+    }
+
+    const row = (data?.[0] ?? null) as InvoiceRow | null;
+    if (!row) {
+      setLatestInvoice(null);
+      return;
+    }
+
+    const patientRaw = Array.isArray(row.patients) ? row.patients[0] : row.patients;
+
+    setLatestInvoice({
+      id: row.id,
+      patientId: row.patient_id,
+      patientName: patientRaw?.full_name ?? "غير معروف",
+      totalAmount: row.total_amount,
+      paidAmount: row.paid_amount,
+      remainingAmount: row.remaining_amount,
+      nextAppointmentDate: row.next_appointment_date,
+      paymentStatus: row.payment_status,
+      items: (row.invoice_items ?? []).map((item) => ({
+        title: item.treatment_title,
+        price: item.price_applied,
+      })),
+    });
+  }, [client]);
+
+  const refreshDailyPayments = useCallback(async () => {
+    if (!client) {
+      return;
+    }
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+
+    const { data, error } = await client
+      .from("invoice_payments")
+      .select("id, amount, method, collected_at, patients ( full_name )")
+      .gte("collected_at", start.toISOString())
+      .order("collected_at", { ascending: false });
+
+    if (error) {
+      setErrorText(mapSupabaseError(error));
+      return;
+    }
+
+    const paymentRows = (data ?? []) as DailyPaymentQueryRow[];
+
+    setDailyPayments(
+      paymentRows.map((row) => {
+        const patientRaw = Array.isArray(row.patients) ? row.patients[0] : row.patients;
+        return {
+          id: row.id,
+          patientName: patientRaw?.full_name ?? "غير معروف",
+          amount: row.amount,
+          method: row.method,
+          collectedAt: row.collected_at,
+        };
+      }),
+    );
+  }, [client]);
+
+  const refreshTodayAppointments = useCallback(async () => {
+    if (!client) {
+      return;
+    }
+    type ApptRow = { id: string; patient_name: string; phone: string; appointment_time: string };
+    const { data, error: apptError } = await client
+      .from("appointments")
+      .select("id, patient_name, phone, appointment_time")
+      .eq("appointment_date", getTodayDateISO())
+      .order("appointment_time", { ascending: true });
+
+    if (!apptError) {
+      setTodayAppointments(
+        ((data ?? []) as ApptRow[]).map((row) => ({
+          id: row.id,
+          patientName: row.patient_name,
+          phone: row.phone,
+          appointmentTime: row.appointment_time,
+        })),
+      );
+    }
+  }, [client]);
+
   useEffect(() => {
     if (!client) {
       return;
     }
 
-    const refresh = async () => {
-      const result = await fetchTodayQueue(client);
-      if (result.error) {
-        setErrorText(result.error);
-        return;
-      }
-      setQueue(result.data);
-      setErrorText(null);
-    };
-
-    void refresh();
-
-    const refreshInvoice = async () => {
-      const { data, error } = await client
-        .from("invoices")
-        .select(
-          `
-            id,
-            patient_id,
-            total_amount,
-            paid_amount,
-            remaining_amount,
-            next_appointment_date,
-            payment_status,
-            created_at,
-            patients ( full_name ),
-            invoice_items ( treatment_title, price_applied )
-          `,
-        )
-        .order("created_at", { ascending: false })
-        .limit(1);
-
-      if (error) {
-        setErrorText(mapSupabaseError(error));
-        return;
-      }
-
-      const row = (data?.[0] ?? null) as InvoiceRow | null;
-      if (!row) {
-        setLatestInvoice(null);
-        return;
-      }
-
-      const patientRaw = Array.isArray(row.patients) ? row.patients[0] : row.patients;
-
-      setLatestInvoice({
-        id: row.id,
-        patientId: row.patient_id,
-        patientName: patientRaw?.full_name ?? "غير معروف",
-        totalAmount: row.total_amount,
-        paidAmount: row.paid_amount,
-        remainingAmount: row.remaining_amount,
-        nextAppointmentDate: row.next_appointment_date,
-        paymentStatus: row.payment_status,
-        items: (row.invoice_items ?? []).map((item) => ({
-          title: item.treatment_title,
-          price: item.price_applied,
-        })),
-      });
-    };
-
-    const refreshDailyPayments = async () => {
-      const start = new Date();
-      start.setHours(0, 0, 0, 0);
-
-      const { data, error } = await client
-        .from("invoice_payments")
-        .select("id, amount, method, collected_at, patients ( full_name )")
-        .gte("collected_at", start.toISOString())
-        .order("collected_at", { ascending: false });
-
-      if (error) {
-        setErrorText(mapSupabaseError(error));
-        return;
-      }
-
-      const paymentRows = (data ?? []) as DailyPaymentQueryRow[];
-
-      setDailyPayments(
-        paymentRows.map((row) => {
-          const patientRaw = Array.isArray(row.patients) ? row.patients[0] : row.patients;
-          return {
-            id: row.id,
-            patientName: patientRaw?.full_name ?? "غير معروف",
-            amount: row.amount,
-            method: row.method,
-            collectedAt: row.collected_at,
-          };
-        }),
-      );
-    };
-
+    void refreshQueue();
     void refreshInvoice();
     void refreshDailyPayments();
-
-    const refreshTodayAppointments = async () => {
-      const { data, error: apptError } = await client
-        .from("appointments")
-        .select("id, patient_name, phone, appointment_time")
-        .eq("appointment_date", getTodayDateISO())
-        .order("appointment_time", { ascending: true });
-
-      if (!apptError) {
-        type ApptRow = { id: string; patient_name: string; phone: string; appointment_time: string };
-        setTodayAppointments(
-          ((data ?? []) as ApptRow[]).map((row) => ({
-            id: row.id,
-            patientName: row.patient_name,
-            phone: row.phone,
-            appointmentTime: row.appointment_time,
-          })),
-        );
-      }
-    };
-
     void refreshTodayAppointments();
 
     const channel = client
       .channel("reception-live-queue")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "visits_queue" },
-        () => {
-          void refresh();
-        },
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "patients" },
-        () => {
-          void refresh();
-        },
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "invoices" },
-        () => {
-          void refreshInvoice();
-        },
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "invoice_items" },
-        () => {
-          void refreshInvoice();
-        },
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "invoice_payments" },
-        () => {
-          void refreshDailyPayments();
-        },
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "appointments" },
-        () => {
-          void refreshTodayAppointments();
-        },
-      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "visits_queue" }, () => { void refreshQueue(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "patients" }, () => { void refreshQueue(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, () => { void refreshInvoice(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoice_items" }, () => { void refreshInvoice(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoice_payments" }, () => { void refreshDailyPayments(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "appointments" }, () => { void refreshTodayAppointments(); })
       .subscribe();
 
     return () => {
       void client.removeChannel(channel);
     };
-  }, [client]);
+  }, [client, refreshQueue, refreshInvoice, refreshDailyPayments, refreshTodayAppointments]);
 
   useEffect(() => {
     if (!client) {
@@ -538,6 +512,8 @@ export default function ReceptionPage() {
     setSelectedPatientId(null);
     setSearchTerm("");
     toast.success("تم تسجيل المريض وإضافته إلى الدور");
+    void refreshQueue();
+    void refreshTodayAppointments();
   };
 
   const onPickSearchPatient = (row: SearchPatientRow) => {
@@ -580,6 +556,7 @@ export default function ReceptionPage() {
     }
 
     toast.success("تم إدخال المريض وإرسال التنبيه للطبيب");
+    void refreshQueue();
   };
 
   const onCompleteCurrent = async () => {
@@ -607,6 +584,7 @@ export default function ReceptionPage() {
     }
 
     toast.success("تم إنهاء الجلسة الحالية");
+    void refreshQueue();
   };
 
   const onRegisterPayment = async () => {
@@ -659,6 +637,8 @@ export default function ReceptionPage() {
     setPaymentAmount("");
     setPaymentMethod("cash");
     toast.success("تم تسجيل الدفع بنجاح");
+    void refreshInvoice();
+    void refreshDailyPayments();
   };
 
   const onSaveNextAppointment = async () => {
@@ -686,6 +666,7 @@ export default function ReceptionPage() {
     }
 
     toast.success("تم حفظ الموعد القادم");
+    void refreshInvoice();
   };
 
   return (

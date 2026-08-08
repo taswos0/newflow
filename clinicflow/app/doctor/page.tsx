@@ -128,20 +128,23 @@ export default function DoctorPage() {
     };
   }, [client]);
 
+  const refreshQueue = useCallback(async () => {
+    if (!client) {
+      return;
+    }
+    const result = await fetchTodayQueue(client);
+    if (result.error) {
+      setErrorText(result.error);
+      return;
+    }
+    setQueue(result.data);
+    setErrorText(null);
+  }, [client]);
+
   useEffect(() => {
     if (!client) {
       return;
     }
-
-    const refreshQueue = async () => {
-      const result = await fetchTodayQueue(client);
-      if (result.error) {
-        setErrorText(result.error);
-        return;
-      }
-      setQueue(result.data);
-      setErrorText(null);
-    };
 
     void refreshQueue();
 
@@ -158,7 +161,7 @@ export default function DoctorPage() {
     return () => {
       void client.removeChannel(channel);
     };
-  }, [client]);
+  }, [client, refreshQueue]);
 
   useEffect(() => {
     if (!client) {
@@ -671,6 +674,7 @@ export default function DoctorPage() {
 
     toast.success("تم إرسال الحساب للسكرتارية بنجاح");
     setBillingDraft(emptyDraft(activeVisitId));
+    void refreshQueue();
   };
 
   return (

@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import type { Session } from "@supabase/supabase-js";
 
 import { tryGetSupabaseBrowserClient } from "@/lib/supabase/client";
-import { canAccessDoctor } from "@/lib/auth/roles";
+import { canAccessDoctor, resolveUserRole } from "@/lib/auth/roles";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -56,17 +56,16 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
     if (session && pathname.startsWith("/doctor") && !canAccessDoctor(session)) {
       router.replace("/reception");
+      return;
+    }
+
+    if (session && pathname === "/" && resolveUserRole(session) === "reception") {
+      router.replace("/reception");
     }
   }, [loading, pathname, router, session]);
 
   if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center px-4">
-        <div className="rounded-2xl border border-line bg-white px-6 py-4 text-sm font-bold text-foreground">
-          جاري التحقق من تسجيل الدخول...
-        </div>
-      </div>
-    );
+    return null;
   }
 
   if (!session && pathname !== "/login") {
