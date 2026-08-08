@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { CalendarClock, FileText, Wallet } from "lucide-react";
 import { toast } from "sonner";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 
 import { fetchTodayQueue, type QueueVisit } from "@/lib/queue/live-queue";
 import { tryGetSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -105,10 +106,27 @@ export default function DoctorPage() {
   const [catalogTitle, setCatalogTitle] = useState("");
   const [catalogPrice, setCatalogPrice] = useState("");
   const [catalogBusy, setCatalogBusy] = useState(false);
+  const [callReceptionBusy, setCallReceptionBusy] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
   const { client, error: setupError } = tryGetSupabaseBrowserClient();
   const lastActiveVisitIdRef = useRef<string | null>(null);
   const hasSyncedActiveVisitRef = useRef(false);
+  const receptionCallChannelRef = useRef<RealtimeChannel | null>(null);
+
+  useEffect(() => {
+    if (!client) {
+      return;
+    }
+
+    const channel = client.channel("clinic-reception-calls");
+    channel.subscribe();
+    receptionCallChannelRef.current = channel;
+
+    return () => {
+      receptionCallChannelRef.current = null;
+      void client.removeChannel(channel);
+    };
+  }, [client]);
 
   useEffect(() => {
     if (!client) {
@@ -511,6 +529,32 @@ export default function DoctorPage() {
     void loadCatalog();
   };
 
+  const onCallReception = async () => {
+    if (!receptionCallChannelRef.current) {
+      toast.error("قناة التنبيه غير جاهزة، حاول مرة أخرى");
+      return;
+    }
+
+    setCallReceptionBusy(true);
+
+    const result = await receptionCallChannelRef.current.send({
+      type: "broadcast",
+      event: "call-reception",
+      payload: {
+        requestedAt: new Date().toISOString(),
+      },
+    });
+
+    setCallReceptionBusy(false);
+
+    if (result !== "ok") {
+      toast.error("تعذر إرسال تنبيه السكرتارية");
+      return;
+    }
+
+    toast.success("تم إرسال استدعاء للسكرتارية");
+  };
+
   const onBillingSubmit = async () => {
     if (!client || !activePatient) {
       return;
@@ -637,12 +681,22 @@ export default function DoctorPage() {
             <p className="text-sm font-semibold text-primary">Doctor View</p>
             <h1 className="text-3xl font-black text-foreground">واجهة الطبيب</h1>
           </div>
-          <Link
-            href="/"
-            className="rounded-full border border-line bg-white px-4 py-2 text-sm font-bold text-foreground transition hover:border-primary/40"
-          >
-            العودة للصفحة الرئيسية
-          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onCallReception}
+              disabled={callReceptionBusy}
+              className="rounded-full bg-secondary px-4 py-2 text-sm font-bold text-white transition hover:opacity-90 disabled:opacity-50"
+            >
+              استدعاء السكرتارية
+            </button>
+            <Link
+              href="/"
+              className="rounded-full border border-line bg-white px-4 py-2 text-sm font-bold text-foreground transition hover:border-primary/40"
+            >
+              العودة للصفحة الرئيسية
+            </Link>
+          </div>
         </header>
 
         {setupError || errorText ? (
