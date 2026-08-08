@@ -104,6 +104,7 @@ export default function ReceptionPage() {
   const [invoiceBusy, setInvoiceBusy] = useState(false);
   const [receptionCallAlertActive, setReceptionCallAlertActive] = useState(false);
   const [todayAppointments, setTodayAppointments] = useState<TodayAppointment[]>([]);
+  const [visitTime, setVisitTime] = useState("");
   const [errorText, setErrorText] = useState<string | null>(null);
   const { client, error: setupError } = tryGetSupabaseBrowserClient();
   const receptionCallChannelRef = useRef<RealtimeChannel | null>(null);
@@ -495,6 +496,22 @@ export default function ReceptionPage() {
       patientId = patientInsert.data.id;
     }
 
+    if (visitTime) {
+      const apptInsert = await (client.from("appointments") as any).insert({
+        patient_id: patientId,
+        patient_name: fullName.trim(),
+        phone: phone.trim(),
+        appointment_date: getTodayDateISO(),
+        appointment_time: visitTime,
+      });
+
+      if (apptInsert.error) {
+        setBusy(false);
+        toast.error(mapSupabaseError(apptInsert.error));
+        return;
+      }
+    }
+
     const visitInsert = await (client.from("visits_queue") as any).insert({
       patient_id: patientId,
       visit_date: getTodayDateISO(),
@@ -510,6 +527,7 @@ export default function ReceptionPage() {
 
     setFullName("");
     setPhone("");
+    setVisitTime("");
     setSelectedPatientId(null);
     setSearchTerm("");
     toast.success("تم تسجيل المريض وإضافته إلى الدور");
@@ -751,6 +769,16 @@ export default function ReceptionPage() {
                   placeholder="رقم الهاتف"
                   className="w-full rounded-xl border border-line px-3 py-2 text-sm outline-none ring-primary/20 focus:ring"
                 />
+                <div className="flex items-center gap-2">
+                  <label className="shrink-0 text-xs font-bold text-foreground">الوقت</label>
+                  <input
+                    type="time"
+                    value={visitTime}
+                    onChange={(event) => setVisitTime(event.target.value)}
+                    className="w-full rounded-xl border border-line px-3 py-2 text-sm outline-none ring-primary/20 focus:ring"
+                  />
+                </div>
+                <p className="text-[11px] text-muted">اختياري — لمنع تعارض المواعيد</p>
                 <button
                   type="submit"
                   disabled={busy}
